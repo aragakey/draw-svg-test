@@ -1,7 +1,10 @@
 import { NextRequest } from "next/server";
 
-export const runtime = "nodejs";
+// 使用 Edge Runtime：原生支持长连接 / 流式响应，且在 Vercel Hobby 上默认超时更宽松。
+export const runtime = "edge";
 export const dynamic = "force-dynamic";
+// 给流留出足够时间（Vercel Edge 默认 25s，Pro 可最长 300s）。
+export const maxDuration = 60;
 
 const UPSTREAM = "https://draw.webbx.space/api/generate";
 
@@ -31,20 +34,28 @@ export async function POST(req: NextRequest) {
   }
   const lang = typeof locale === "string" && locale ? locale : "zh";
 
-  const upstream = await fetch(UPSTREAM, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      // 带上来源，绕开潜在的 referer 校验
-      Origin: "https://draw.webbx.space",
-      Referer: "https://draw.webbx.space/",
-    },
-    body: JSON.stringify({ subject: subject.trim(), locale: lang }),
-    // 让 Next.js 不要缓存
-    cache: "no-store",
-    signal: req.signal,
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(UPSTREAM, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        // 带上来源，绕开潜在的 referer 校验
+        Origin: "https://draw.webbx.space",
+        Referer: "https://draw.webbx.space/",
+      },
+      body: JSON.stringify({ subject: subject.trim(), locale: lang }),
+      // 让 Next.js 不要缓存
+      cache: "no-store",
+      signal: req.signal,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Upstream fetch failed";
+    return Response.json({ error: `Upstream unreachable: ${msg}` }, {
+      status: 502,
+    });
+  }
 
   // 保留 content-type（可能是 text/event-stream 或 application/json）
   const headers = new Headers();
