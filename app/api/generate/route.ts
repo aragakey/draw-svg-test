@@ -1,27 +1,38 @@
 import { NextRequest } from "next/server";
 
-// 使用 Edge Runtime：原生支持长连接 / 流式响应，且在 Vercel Hobby 上默认超时更宽松。
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
-// 给流留出足够时间（Vercel Edge 默认 25s，Pro 可最长 300s）。
 export const maxDuration = 60;
 
 const UPSTREAM = "https://draw.webbx.space/api/generate";
 
+const corsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "Content-Type",
+};
+
+/** CORS 预检 */
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders });
+}
+
 /**
- * 代理 draw.webbx.space 的 /api/generate 接口。
+ * 代理 draw.webbx.space 的 /api/generate 接口，流式透传。
  *
- * 上游响应为 SSE 风格的流式文本（事件之间用空行分隔，
- * 事件类型包括 thinking / svg / tagline）。
- * 排队时返回 429 JSON { activeCount }；失败时返回 JSON { error }。
- * 这里原样透传，前端自行解析 SSE。
+ * 成功时返回 text/event-stream，包含三类 SSE 事件：thinking / svg / tagline。
+ * 排队时返回 429 JSON { activeCount }。
+ * 失败时返回 JSON { error }。
  */
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json(
+      { error: "Invalid JSON body" },
+      { status: 400, headers: corsHeaders },
+    );
   }
 
   const { subject, locale } = (body ?? {}) as {
@@ -30,7 +41,10 @@ export async function POST(req: NextRequest) {
   };
 
   if (typeof subject !== "string" || !subject.trim()) {
-    return Response.json({ error: "subject is required" }, { status: 400 });
+    return Response.json(
+      { error: "subject is required" },
+      { status: 400, headers: corsHeaders },
+    );
   }
   const lang = typeof locale === "string" && locale ? locale : "zh";
 
@@ -41,24 +55,22 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
-        // 带上来源，绕开潜在的 referer 校验
         Origin: "https://draw.webbx.space",
         Referer: "https://draw.webbx.space/",
       },
       body: JSON.stringify({ subject: subject.trim(), locale: lang }),
-      // 让 Next.js 不要缓存
       cache: "no-store",
       signal: req.signal,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Upstream fetch failed";
-    return Response.json({ error: `Upstream unreachable: ${msg}` }, {
-      status: 502,
-    });
+    return Response.json(
+      { error: `Upstream unreachable: ${msg}` },
+      { status: 502, headers: corsHeaders },
+    );
   }
 
-  // 保留 content-type（可能是 text/event-stream 或 application/json）
-  const headers = new Headers();
+  const headers = new Headers(corsHeaders);
   const ct = upstream.headers.get("content-type");
   if (ct) headers.set("content-type", ct);
   headers.set("cache-control", "no-cache, no-transform");
