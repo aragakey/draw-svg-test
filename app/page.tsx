@@ -201,11 +201,7 @@ export default function Home() {
             </Button>
           ) : (
             <Button type="submit" disabled={!subject.trim()}>
-              {status === "loading" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
+              <Sparkles className="h-4 w-4" />
               画！
             </Button>
           )}
